@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "stem-local"
 version = "0.1.0"
-description = "Offline CPU-only vocal separation prototype"
+description = "Offline CPU-only vocal and melody separation application"
 readme = "README.md"
 requires-python = ">=3.11,<3.12"
 dependencies = [
