@@ -9,12 +9,12 @@ The caller owns chunking, sequencing, progress, cancellation and export.
 from pathlib import Path
 from typing import Protocol
 
-from stem_local.audio import Audio
+from stem_local.audio import Audio, ProgressCallback
 from stem_local.models import ModelSpec
 
 
 class StemEngine(Protocol):
-    def separate(self, audio: Audio) -> Audio: ...
+    def separate(self, audio: Audio, *, progress: ProgressCallback | None = None) -> Audio: ...
 
     def audit(self) -> dict[str, object]: ...
 

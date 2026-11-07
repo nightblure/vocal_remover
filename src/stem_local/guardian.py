@@ -13,6 +13,8 @@ from dataclasses import dataclass
 
 import psutil
 
+from stem_local.process_io import configure_utf8
+
 
 @dataclass
 class _ProcessResources:
@@ -165,6 +167,8 @@ def start_parent_guard(*, parent_pid: int | None, parent_created: float | None) 
     _resources.guardian = subprocess.Popen(  # noqa: S603 - fixed module under this interpreter; no shell.
         [
             sys.executable,
+            "-X",
+            "utf8",
             "-m",
             "stem_local.guardian",
             "--parent-pid",
@@ -185,6 +189,7 @@ def start_parent_guard(*, parent_pid: int | None, parent_created: float | None) 
 
 def main() -> None:
     """Private entry point; never discover or terminate unrelated user processes."""
+    configure_utf8()
     parser = argparse.ArgumentParser()
     parser.add_argument("--parent-pid", type=int, required=True)
     parser.add_argument("--parent-created", type=float, required=True)

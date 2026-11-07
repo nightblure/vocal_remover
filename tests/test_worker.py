@@ -1,6 +1,7 @@
 """Worker CLI, reports and sequential model-lifetime checks."""
 
 import json
+import os
 import subprocess
 import sys
 from collections.abc import Callable
@@ -57,6 +58,27 @@ def test_missing_source_fails_before_importing_torch(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
 
 
+@pytest.mark.parametrize("encoding", ["cp1251", "ascii"])
+def test_worker_events_preserve_unicode_with_a_legacy_stdio_encoding(tmp_path: Path, encoding: str) -> None:
+    source = tmp_path / "Музыка 🎵" / "песня.wav"
+    environment = os.environ.copy()
+    environment["PYTHONIOENCODING"] = encoding
+
+    result = subprocess.run(  # noqa: S603 - project worker and a nonexistent test input, no shell.
+        [sys.executable, "-m", "stem_local.worker", "separate", str(source)],
+        env=environment,
+        capture_output=True,
+        check=False,
+        timeout=15,
+    )
+
+    events = [json.loads(line.removeprefix("STEM_LOCAL ")) for line in result.stdout.decode("utf-8").splitlines()]
+    assert result.returncode == 1
+    assert events[-1]["event"] == "error"
+    assert str(source) in events[-1]["message"]
+    assert str(source) in result.stderr.decode("utf-8")
+
+
 def test_report_write_is_atomic(tmp_path: Path) -> None:
     path = tmp_path / "report.json"
 
@@ -107,7 +129,8 @@ def test_pipeline_releases_first_model_before_loading_second(
             assert not alive
             alive.append("vocals")
 
-        def separate(self, audio: np.ndarray) -> np.ndarray:
+        def separate(self, audio: np.ndarray, *, progress: Callable[[int, int], None]) -> np.ndarray:
+            progress(1, 2)
             return audio * 0.5
 
         def audit(self) -> dict[str, object]:
@@ -120,7 +143,8 @@ def test_pipeline_releases_first_model_before_loading_second(
         def __init__(self, **_kwargs: object) -> None:
             assert not alive, "Both models were alive at the same time"
 
-        def separate(self, audio: np.ndarray) -> np.ndarray:
+        def separate(self, audio: np.ndarray, *, progress: Callable[[int, int], None]) -> np.ndarray:
+            progress(1, 2)
             return audio * 0.2
 
         def audit(self) -> dict[str, object]:
@@ -129,9 +153,8 @@ def test_pipeline_releases_first_model_before_loading_second(
     def factory(**kwargs: object) -> object:
         spec = kwargs["spec"]
         assert isinstance(spec, ModelSpec)
-        if spec.role == "vocals":
-            return FakeVocalEngine(**kwargs)
-        return FakeMelodyEngine(**kwargs)
+        engine_type = FakeVocalEngine if spec.role == "vocals" else FakeMelodyEngine
+        return engine_type(**kwargs)
 
     monkeypatch.setattr("stem_local.engine.create_engine", factory)
     monkeypatch.setattr("stem_local.worker.block_network", lambda: None)
@@ -158,8 +181,16 @@ def test_pipeline_releases_first_model_before_loading_second(
     assert not list(report_path.parent.glob(".work-*"))
     assert not alive
     progress = [event for event in events if event["event"] == "progress"]
-    assert len(progress) == len(expected)
+    assert len(progress) == 2 * len(expected)
     assert progress[-1]["done"] == progress[-1]["total"]
+    fractions = []
+    for event in progress:
+        done, total = event["done"], event["total"]
+        assert isinstance(done, int)
+        assert isinstance(total, int)
+        fractions.append(done / total)
+    assert fractions == sorted(fractions)
+    assert fractions[0] == 0.5 / len(expected)
     assert set(report["cpu_audit"]) == expected
 
 

@@ -25,6 +25,7 @@ if os.name != "nt":
 
 from stem_local.guardian import start_parent_guard
 from stem_local.models import DEFAULT_CACHE, MODELS, check_license, prepare_model
+from stem_local.process_io import configure_utf8
 
 EVENT_PREFIX = "STEM_LOCAL "
 
@@ -35,7 +36,8 @@ class CancelledError(Exception):
 
 def emit(event: dict[str, object]) -> None:
     """Write one machine-readable event without buffering progress updates."""
-    sys.stdout.write(f"{EVENT_PREFIX}{json.dumps(event, ensure_ascii=False)}\n")
+    # ASCII JSON is also UTF-8, even for embedding callers with legacy stdout encodings.
+    sys.stdout.write(f"{EVENT_PREFIX}{json.dumps(event, ensure_ascii=True)}\n")
     sys.stdout.flush()
 
 
@@ -217,6 +219,10 @@ def parser() -> argparse.ArgumentParser:
         command.add_argument("--mode", choices=("vocals", "vocals-melody"), default="vocals")
         command.add_argument("--parent-pid", type=int, default=None, help=argparse.SUPPRESS)
         command.add_argument("--parent-created", type=float, default=None, help=argparse.SUPPRESS)
+        if name == "download":
+            command.add_argument(
+                "--repair", action="store_true", help="Replace corrupt cached files after verification"
+            )
         if name == "separate":
             command.add_argument("input", type=Path)
             command.add_argument("--output", type=Path, default=Path("outputs"))
@@ -242,6 +248,7 @@ def _validate_options(args: argparse.Namespace) -> None:
 
 def main() -> int:
     """Run one guarded CLI task and report failures over the event stream."""
+    configure_utf8()
     args = parser().parse_args()
     signal.signal(signal.SIGTERM, cancel)
     signal.signal(signal.SIGINT, cancel)
@@ -253,9 +260,16 @@ def main() -> int:
                 cache=args.cache,
                 emit=emit,
                 accept_unverified=args.accept_unverified_license,
+                repair=args.repair,
             )
             if args.mode == "vocals-melody" and args.model != "htdemucs":
-                prepare_model(spec=MODELS["htdemucs"], cache=args.cache, emit=emit, accept_unverified=False)
+                prepare_model(
+                    spec=MODELS["htdemucs"],
+                    cache=args.cache,
+                    emit=emit,
+                    accept_unverified=False,
+                    repair=args.repair,
+                )
         else:
             _validate_options(args)
             run_separation(args)

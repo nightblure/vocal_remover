@@ -40,6 +40,8 @@ def check_dependencies() -> None:
             [str(path), "-hide_banner", "-encoders" if name == "ffmpeg" else "-version"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             check=True,
             timeout=30,
         )
@@ -56,6 +58,9 @@ def main(arguments: list[str] | None = None) -> int:
     root = args.root.resolve()
     try:
         check_dependencies()
+        from stem_local.process_io import configure_utf8  # noqa: PLC0415 - project may not be installed yet.
+
+        configure_utf8()
         if args.check:
             sys.stdout.write("Dependencies are ready. Nothing was installed or downloaded.\n")
             return 0

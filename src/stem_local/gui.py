@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (
 )
 
 from stem_local.models import DEFAULT_CACHE, MODELS
+from stem_local.process_io import configure_utf8
 from stem_local.waveform import WaveformAnalyzer, WaveformView, clock
 from stem_local.worker import EVENT_PREFIX
 
@@ -434,9 +435,10 @@ class MainWindow(QMainWindow):
             for spec in required
             for artifact in (spec.config, spec.weights)
         )
-        self.download_button.setVisible(not available)
+        self.download_button.setText("Проверить модели" if available else "Подготовить модели")
+        self.download_button.setToolTip("Проверить SHA-256; скачать недостающие или восстановить повреждённые файлы.")
         self.status.setText(
-            "Готово к запуску · обработка на вашем компьютере"
+            "Файлы моделей есть · SHA-256 проверяется перед обработкой"
             if available
             else "Нажмите «Подготовить модели». Интернет нужен только для скачивания.",
         )
@@ -451,7 +453,7 @@ class MainWindow(QMainWindow):
         descriptions = [
             "Каталог входит в приложение. Автоматического поиска и установки новых весов пока нет.",
             "Новая модель добавляется после проверки совместимости, лицензии и SHA-256.",
-            "Обновление не заменяет ваши старые веса. Разделение работает без интернета.",
+            "Исправные веса не скачиваются повторно. Разделение работает без интернета.",
             f"Кэш: {self.cache}\n",
         ]
         for spec in MODELS.values():
@@ -506,15 +508,16 @@ class MainWindow(QMainWindow):
         model = MODELS[self.model.currentData()]
         answer = QMessageBox.question(
             self,
-            "Скачивание весов",
-            f"Скачать {model.title}?\n"
-            "Kimberley: около 913 MB. Для мелодий дополнительно HTDemucs.\n"
-            "Интернет нужен только для этого шага. Файлы модели проверяются по SHA-256.",
+            "Проверка и подготовка моделей",
+            f"Проверить файлы {model.title}?\n"
+            "Исправные файлы останутся без изменений. Недостающие и повреждённые будут скачаны.\n"
+            "Kimberley: около 913 MB. Для мелодий проверяется также HTDemucs.\n"
+            "Интернет нужен только для скачивания. Замена — после проверки SHA-256.",
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
-        arguments = ["download", *self._common_arguments()]
-        self.start_job(Job(arguments=arguments, title=f"Скачивание · {model.title}"))
+        arguments = ["download", *self._common_arguments(), "--repair"]
+        self.start_job(Job(arguments=arguments, title=f"Подготовка моделей · {model.title}"))
 
     def _run(self) -> None:
         if self.active is not None:
@@ -610,6 +613,8 @@ class MainWindow(QMainWindow):
         self.process.setArguments(
             [
                 "-u",
+                "-X",
+                "utf8",
                 "-m",
                 "stem_local.worker",
                 *job.arguments,
@@ -665,7 +670,8 @@ class MainWindow(QMainWindow):
     def _inference_progress(self, *, done: int, total: int) -> None:
         if total > 0:
             self.progress.setRange(0, 1000)
-            self.progress.setValue(round(1000 * done / total))
+            # Reserve 100% for successful export and worker exit, not the final model forward.
+            self.progress.setValue(min(999, round(1000 * done / total)))
 
     def _download_progress(self, event: dict[str, Any]) -> None:
         self.status.setText(f"Скачивание {event['file']} · {event['bytes'] / 1e6:.0f} MB")
@@ -789,6 +795,7 @@ class MainWindow(QMainWindow):
 
 
 def main() -> int:
+    configure_utf8()
     parser = argparse.ArgumentParser(description="Stem Local GUI")
     parser.add_argument("--cache", type=Path, default=DEFAULT_CACHE)
     parser.add_argument("--output", type=Path, default=Path("outputs"))

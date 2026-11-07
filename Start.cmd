@@ -1,5 +1,7 @@
 @echo off
 setlocal
+set "PYTHONUTF8=1"
+set "PYTHONIOENCODING=utf-8"
 cd /d "%~dp0"
 if not exist ".venv\Scripts\python.exe" (
     echo Install Python 3.11 x64, uv and FFmpeg with ffprobe and libmp3lame.

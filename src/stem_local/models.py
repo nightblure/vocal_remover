@@ -116,7 +116,7 @@ def verify_artifact(path: Path, artifact: Artifact) -> None:
         message = f"Отсутствует файл {path}. Сначала скачайте выбранную модель."
         raise FileNotFoundError(message)
     if sha256_file(path) != artifact.sha256:
-        message = f"SHA-256 не совпадает: {path}. Удалите повреждённый файл и скачайте заново."
+        message = f"SHA-256 не совпадает: {path}. Нажмите «Проверить модели», чтобы восстановить файл."
         raise ValueError(message)
 
 
@@ -127,14 +127,21 @@ def check_license(spec: ModelSpec, *, accept_unverified: bool) -> None:
         raise ValueError(message)
 
 
-def download_artifact(*, artifact: Artifact, directory: Path, emit: EventCallback) -> Path:
+def download_artifact(*, artifact: Artifact, directory: Path, emit: EventCallback, repair: bool = False) -> Path:
     """Verify cached weights or download and atomically publish a verified artifact."""
     directory.mkdir(parents=True, exist_ok=True)
     destination = directory / artifact.filename
     if destination.exists():
-        verify_artifact(destination, artifact)
-        emit({"event": "status", "message": f"Уже скачан и проверен: {artifact.filename}"})
-        return destination
+        emit({"event": "status", "message": f"Проверка SHA-256: {artifact.filename}"})
+        try:
+            verify_artifact(destination, artifact)
+        except ValueError:
+            if not repair:
+                raise
+            emit({"event": "status", "message": f"Восстановление повреждённого файла: {artifact.filename}"})
+        else:
+            emit({"event": "status", "message": f"Уже скачан и проверен: {artifact.filename}"})
+            return destination
 
     if urlsplit(artifact.url).scheme != "https":
         message = "Model downloads require HTTPS"
@@ -173,9 +180,16 @@ def download_artifact(*, artifact: Artifact, directory: Path, emit: EventCallbac
     return destination
 
 
-def prepare_model(*, spec: ModelSpec, cache: Path, emit: EventCallback, accept_unverified: bool) -> None:
+def prepare_model(
+    *,
+    spec: ModelSpec,
+    cache: Path,
+    emit: EventCallback,
+    accept_unverified: bool,
+    repair: bool = False,
+) -> None:
     """Download a model's pinned configuration and weights after checking its license."""
     check_license(spec, accept_unverified=accept_unverified)
     for artifact in (spec.config, spec.weights):
-        download_artifact(artifact=artifact, directory=cache / spec.id, emit=emit)
+        download_artifact(artifact=artifact, directory=cache / spec.id, emit=emit, repair=repair)
     emit({"event": "ready", "model": spec.id})

@@ -2,6 +2,8 @@
 # macOS: double-click this file in Finder.
 ROOT="$(cd -- "$(dirname -- "$0")" && pwd)"
 cd -- "$ROOT" || exit 1
+export PYTHONUTF8=1
+export PYTHONIOENCODING=utf-8
 if [[ -x ".venv/bin/python" ]]; then
     .venv/bin/python src/stem_local/launcher.py --root "$ROOT" "$@"
     RESULT=$?

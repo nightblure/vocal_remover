@@ -11,7 +11,7 @@ from pathlib import Path
 
 import psutil
 import pytest
-from PySide6.QtCore import QProcess, QUrl
+from PySide6.QtCore import QProcess, QProcessEnvironment, QUrl
 from PySide6.QtWidgets import QApplication, QGroupBox, QListWidget, QMessageBox, QPushButton
 
 from stem_local.guardian import same_process
@@ -195,7 +195,7 @@ def test_download_also_blocks_removal_until_it_finishes(
     assert download is not None
     assert download.arguments[0] == "download"
     assert window.active is download
-    assert "Скачивание" in window.task_label.text()
+    assert "Подготовка моделей" in window.task_label.text()
     assert not window.run_button.isEnabled()
 
 
@@ -489,8 +489,8 @@ def opened_directories(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
 @pytest.fixture
 def completion_event(tmp_path: Path) -> dict[str, str]:
-    directory = tmp_path / "specific-job-result"
-    directory.mkdir()
+    directory = tmp_path / "Музыка 🎵" / "specific-job-result"
+    directory.mkdir(parents=True)
     report_path = directory / "report.json"
     report = {
         "status": "completed",
@@ -522,6 +522,29 @@ def test_success_opens_exact_job_directory_only_after_worker_exits(
     assert window.active is None
     assert window.task_label.isHidden()
     assert window.progress.value() == window.progress.maximum()
+
+
+def test_worker_unicode_completion_survives_legacy_encoding_in_the_real_qprocess(
+    *,
+    window: MainWindow,
+    completion_event: dict[str, str],
+    opened_directories: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    environment = QProcessEnvironment.systemEnvironment()
+    environment.insert("PYTHONIOENCODING", "cp1251")
+    window.process.setProcessEnvironment(environment)
+    code = f"from stem_local.worker import emit; emit({completion_event!r})"
+    original = window.process.setArguments
+    monkeypatch.setattr(window.process, "setArguments", lambda _arguments: original(["-u", "-c", code]))
+
+    window.start_job(Job(arguments=[], title="Песня 🎵"))
+    assert window.process.waitForFinished(5000)
+
+    assert window.last_error == ""
+    assert window.current_report_path == Path(completion_event["report"])
+    assert opened_directories == [str(Path(completion_event["report"]).parent)]
+    assert window.open_result_button.isEnabled()
 
 
 @pytest.mark.parametrize(("exit_code", "cancelled"), [(1, False), (0, True)])
@@ -560,6 +583,65 @@ def test_license_warning_is_model_specific(window: MainWindow) -> None:
     window.model.setCurrentIndex(0)
 
     assert window.accept_license.isHidden()
+
+
+def test_existing_model_files_keep_the_check_and_repair_action_available(window: MainWindow) -> None:
+    spec = MODELS[window.model.currentData()]
+    directory = window.cache / spec.id
+    directory.mkdir(parents=True)
+    for artifact in (spec.config, spec.weights):
+        (directory / artifact.filename).write_bytes(b"corrupt")
+
+    window.mode.setCurrentIndex(1)
+    window.mode.setCurrentIndex(0)
+
+    assert not window.download_button.isHidden()
+    assert window.download_button.text() == "Проверить модели"
+
+
+@pytest.mark.parametrize("confirm", [True, False])
+def test_check_and_repair_requires_confirmation_before_starting_a_worker(
+    *,
+    window: MainWindow,
+    monkeypatch: pytest.MonkeyPatch,
+    confirm: bool,
+) -> None:
+    started: list[Job] = []
+    monkeypatch.setattr(window, "start_job", started.append)
+    answer = QMessageBox.StandardButton.Yes if confirm else QMessageBox.StandardButton.No
+    monkeypatch.setattr("stem_local.gui.QMessageBox.question", lambda *_args: answer)
+
+    window.download_button.click()
+
+    assert len(started) == int(confirm)
+    if confirm:
+        assert started[0].arguments[0] == "download"
+        assert "--repair" in started[0].arguments
+
+
+def test_full_inference_progress_is_not_success_before_export(window: MainWindow) -> None:
+    window.handle_worker_event({"event": "progress", "done": 1, "total": 1})
+
+    assert 0 < window.progress.value() < window.progress.maximum()
+    assert not window.open_result_button.isEnabled()
+
+
+def test_inner_progress_refreshes_the_stall_deadline(
+    window: MainWindow,
+    sleeping_job: Job,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    window.start_job(sleeping_job)
+    assert window.process.waitForStarted(2000)
+    now = time.monotonic()
+    monkeypatch.setattr("stem_local.gui.time.monotonic", lambda: now)
+    window.last_activity = now - window.stall_timeout_seconds - 1
+
+    window.handle_worker_event({"event": "progress", "done": 1, "total": 10})
+    window.health_timer.timeout.emit()
+
+    assert not window.task_failed
+    assert window.process.state() == QProcess.ProcessState.Running
 
 
 def test_cancel_stops_worker_and_allows_a_new_run(

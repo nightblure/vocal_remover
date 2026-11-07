@@ -83,6 +83,8 @@ class WaveformAnalyzer(QObject):
         process.start(
             sys.executable,
             [
+                "-X",
+                "utf8",
                 "-m",
                 "stem_local.tool_runner",
                 "--parent-pid",

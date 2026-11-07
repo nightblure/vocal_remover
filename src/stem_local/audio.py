@@ -4,12 +4,14 @@ import subprocess
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Protocol
 
 import numpy as np
 import numpy.typing as npt
 import soundfile as sf
 
 Audio = npt.NDArray[np.float32]
+ProgressCallback = Callable[[int, int], None]
 SAMPLE_RATE = 44100
 CHANNELS = 2
 TOOL_TIMEOUT_SECONDS = 300
@@ -24,6 +26,10 @@ class StreamWindow:
 DEFAULT_WINDOW = StreamWindow()
 
 
+class StemInference(Protocol):
+    def __call__(self, audio: Audio, *, progress: ProgressCallback) -> Audio: ...
+
+
 def run_audio_tool(command: list[str], *, timeout_seconds: float) -> subprocess.CompletedProcess[str]:
     """Run a shell-free local audio command with bounded execution time."""
     try:
@@ -31,6 +37,8 @@ def run_audio_tool(command: list[str], *, timeout_seconds: float) -> subprocess.
             command,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             check=False,
             timeout=timeout_seconds,
         )
@@ -87,8 +95,8 @@ def stream_stem(
     *,
     source: Path,
     destination: Path,
-    infer: Callable[[Audio], Audio],
-    progress: Callable[[int, int], None],
+    infer: StemInference,
+    progress: ProgressCallback,
     window: StreamWindow = DEFAULT_WINDOW,
 ) -> None:
     """Separate bounded windows and crossfade their overlaps into one stem."""
@@ -108,7 +116,14 @@ def stream_stem(
         for start in chunk_starts(frames=len(reader), window=window_frames, overlap=overlap):
             reader.seek(start)
             block = reader.read(window_frames, dtype="float32", always_2d=True)
-            estimate = infer(block)
+            final = start + len(block) >= len(reader)
+            keep = 0 if final else overlap
+            stop = len(block) - keep
+
+            def report_step(done: int, total: int, *, offset: int = start, frames: int = stop) -> None:
+                progress(offset + round(frames * done / total), len(reader))
+
+            estimate = infer(block, progress=report_step)
             if estimate.shape != block.shape or not np.isfinite(estimate).all():
                 message = "Model returned invalid samples"
                 raise ValueError(message)
@@ -116,9 +131,6 @@ def stream_stem(
                 count = len(pending)
                 ramp = np.linspace(0, 1, count, dtype=np.float32)[:, None]
                 estimate[:count] = pending * (1 - ramp) + estimate[:count] * ramp
-            final = start + len(block) >= len(reader)
-            keep = 0 if final else overlap
-            stop = len(estimate) - keep
             writer.write(estimate[:stop])
             pending = estimate[stop:].copy() if keep else None
             progress(min(start + stop, len(reader)), len(reader))

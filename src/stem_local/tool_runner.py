@@ -7,6 +7,7 @@ import sys
 from types import FrameType
 
 from stem_local.guardian import start_parent_guard
+from stem_local.process_io import configure_utf8
 
 
 def _stop(_signum: int, _frame: FrameType | None) -> None:
@@ -16,6 +17,7 @@ def _stop(_signum: int, _frame: FrameType | None) -> None:
 
 def main() -> int:
     """Forward stdout/stderr unchanged so FFprobe/FFmpeg remain streaming tools."""
+    configure_utf8()
     parser = argparse.ArgumentParser()
     parser.add_argument("--parent-pid", type=int, required=True)
     parser.add_argument("--parent-created", type=float, required=True)

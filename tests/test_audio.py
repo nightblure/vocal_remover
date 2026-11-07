@@ -38,7 +38,7 @@ def test_streaming_identity_preserves_length_and_boundaries(
     stream_stem(
         source=source,
         destination=destination,
-        infer=lambda audio: audio.copy(),
+        infer=lambda audio, **_kwargs: audio.copy(),
         progress=lambda done, total: updates.append((done, total)),
         window=StreamWindow(duration_seconds=2, overlap_seconds=0.2),
     )
@@ -51,6 +51,31 @@ def test_streaming_identity_preserves_length_and_boundaries(
 
 def test_schedule_never_adds_redundant_tail() -> None:
     assert list(chunk_starts(frames=38, window=20, overlap=2)) == [0, 18]
+
+
+def test_stream_reports_inner_model_steps_before_the_audio_window_finishes(
+    audio_factory: Callable[..., tuple[Path, np.ndarray]],
+    tmp_path: Path,
+) -> None:
+    source, _ = audio_factory(frames=20, sample_rate=10)
+    updates: list[tuple[int, int]] = []
+
+    def infer(audio: np.ndarray, *, progress: Callable[[int, int], None]) -> np.ndarray:
+        for done in range(1, 5):
+            progress(done, 4)
+            assert updates[-1] == (done * 5, 20)
+        return audio.copy()
+
+    stream_stem(
+        source=source,
+        destination=tmp_path / "vocals.wav",
+        infer=infer,
+        progress=lambda done, total: updates.append((done, total)),
+        window=StreamWindow(duration_seconds=2, overlap_seconds=0.2),
+    )
+
+    assert updates[:4] == [(5, 20), (10, 20), (15, 20), (20, 20)]
+    assert updates[-1] == (20, 20)
 
 
 @pytest.mark.parametrize("overlap", [-1, 10, 20])
@@ -116,7 +141,7 @@ def test_invalid_model_output_is_rejected(
         stream_stem(
             source=source,
             destination=tmp_path / "invalid.wav",
-            infer=lambda audio: np.full_like(audio, np.nan),
+            infer=lambda audio, **_kwargs: np.full_like(audio, np.nan),
             progress=lambda _done, _total: None,
         )
 
@@ -166,3 +191,12 @@ def test_external_audio_process_has_a_bounded_timeout() -> None:
         run_audio_tool([sys.executable, "-c", "import time; time.sleep(60)"], timeout_seconds=0.1)
 
     assert time.monotonic() - started < allowed_seconds
+
+
+def test_external_audio_tool_output_is_decoded_as_utf8(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("locale.getencoding", lambda: "cp1251")
+    code = "import sys; sys.stdout.buffer.write('Музыка 🎵'.encode('utf-8'))"
+
+    result = run_audio_tool([sys.executable, "-c", code], timeout_seconds=10)
+
+    assert result.stdout == "Музыка 🎵"
