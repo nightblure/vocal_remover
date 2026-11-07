@@ -1,0 +1,67 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "stem-local"
+version = "0.1.0"
+description = "Offline CPU-only vocal separation prototype"
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+  "audio-separator[cpu]==0.48.0",
+  "torch==2.13.0",
+  "PySide6==6.12.0",
+  "numpy>=2,<3",
+  "soundfile>=0.13,<0.14",
+  "psutil>=7,<8",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10", "ruff>=0.14", "mypy>=1.18", "types-psutil"]
+
+[project.scripts]
+stem-local = "stem_local.gui:main"
+stem-local-cli = "stem_local.worker:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/stem_local"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+extend-exclude = [".runtime"] # Downloaded runtimes, dependency sources and caches, not project code.
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+  "D100", "D101", "D102", "D103", "D107", "CPY001",
+  "D203",   # Conflicts with D211: no blank line before class docstrings.
+  "D213",   # Conflicts with D212: start multiline summaries on the first line.
+  "COM812", # Trailing commas are managed by ruff format.
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101"]
+
+[tool.mypy]
+python_version = "3.11"
+check_untyped_defs = true
+disallow_untyped_defs = true
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "stem_local.backends.audio_separator"
+disable_error_code = ["misc"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+# CPU wheels on Windows/Linux. macOS CPU is enforced before model loading.
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform != 'darwin'" }]
